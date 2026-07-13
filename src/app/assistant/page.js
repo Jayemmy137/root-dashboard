@@ -14,7 +14,7 @@ export default function Assistant() {
   const [messages, setMessages] = useState([
     {
       role: "bot",
-      text: "Tell me what plant you're growing, and I'll suggest moisture settings for it. Try something like \"I want to plant basil\" or just \"scent leaf\".",
+      text: "Tell me what crop you're growing, and I'll suggest moisture settings and watering guidance for it. Try something like \"tomato\" or \"how often should I water okra?\".",
     },
   ]);
   const [applied, setApplied] = useState(false);
@@ -55,7 +55,7 @@ export default function Assistant() {
           ...prev,
           {
             role: "bot",
-            text: match.description,
+            text: `${match.name} (${match.stage})`,
             plant: match,
           },
         ]);
@@ -64,10 +64,7 @@ export default function Assistant() {
           ...prev,
           {
             role: "bot",
-            text:
-              "I don't have data on that one yet. Plants I know about: " +
-              listPlantNames().join(", ") +
-              ".",
+            text: "I don't have data on that one yet. Crops I know about: " + listPlantNames().join(", ") + ".",
           },
         ]);
       }
@@ -123,16 +120,31 @@ export default function Assistant() {
                       : "bg-[var(--bg-card)] border border-[var(--border-color)]"
                   }`}
                 >
-                  <p>{m.text}</p>
+                  <p className="font-medium">{m.text}</p>
+
                   {m.plant && (
-                    <div className="mt-3 pt-3 border-t border-[var(--border-color)]">
-                      <div className="flex justify-between text-xs text-[var(--text-muted)] mb-2">
+                    <div className="mt-3 pt-3 border-t border-[var(--border-color)] flex flex-col gap-2">
+                      <div className="flex justify-between text-xs text-[var(--text-muted)]">
                         <span>Minimum: <span className="font-mono text-[#E2A93E]">{m.plant.minMoisture}%</span></span>
                         <span>Target: <span className="font-mono text-[var(--accent)]">{m.plant.maxMoisture}%</span></span>
                       </div>
+
+                      <p className="text-xs">
+                        <span className="text-[var(--text-muted)]">Watering: </span>
+                        {m.plant.frequency}
+                      </p>
+                      <p className="text-xs">
+                        <span className="text-[var(--text-muted)]">Tip: </span>
+                        {m.plant.tips}
+                      </p>
+                      <p className="text-xs">
+                        <span className="text-[var(--text-muted)]">Watch for: </span>
+                        {m.plant.issues}
+                      </p>
+
                       <button
                         onClick={() => applySettings(m.plant)}
-                        className="w-full bg-[var(--accent)] text-[#04150B] rounded-lg py-2 text-xs font-medium hover:opacity-90 transition-opacity flex items-center justify-center gap-1.5"
+                        className="w-full bg-[var(--accent)] text-[#04150B] rounded-lg py-2 text-xs font-medium hover:opacity-90 transition-opacity flex items-center justify-center gap-1.5 mt-1"
                       >
                         {applied ? (
                           <>
@@ -154,7 +166,7 @@ export default function Assistant() {
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="e.g. I want to plant tomatoes"
+              placeholder="e.g. how often should I water tomato?"
               className="flex-1 border border-[var(--border-color)] bg-[var(--bg-card)] text-[var(--text-primary)] rounded-lg px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
             />
             <button

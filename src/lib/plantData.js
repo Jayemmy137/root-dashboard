@@ -1,115 +1,169 @@
-// src/lib/plantData.js
-//
-// Simple local "database" of plants with moisture preferences.
-// findPlant(text) does a loose keyword match against plant names/aliases.
-// listPlantNames() returns the display names, used when nothing matches.
+/*
+  Vegetable/plant database for the Roots assistant.
+  Moisture values are 0-100% to match the ESP32 sensor scale and the
+  Settings page's minMoisture/maxMoisture range sliders.
+*/
 
-const PLANTS = [
-  {
-    name: "Basil",
-    aliases: ["basil"],
-    minMoisture: 35,
-    maxMoisture: 60,
-    description:
-      "Basil likes consistently moist (but not soggy) soil. I'd keep it between 35% and 60% moisture.",
-  },
+const plants = [
   {
     name: "Tomato",
     aliases: ["tomato", "tomatoes"],
-    minMoisture: 40,
-    maxMoisture: 70,
-    description:
-      "Tomatoes are thirsty and benefit from deep, even watering. I'd target 40% to 70% moisture.",
-  },
-  {
-    name: "Scent leaf",
-    aliases: ["scent leaf", "scentleaf", "nchanwu", "african basil", "efirin"],
-    minMoisture: 40,
-    maxMoisture: 65,
-    description:
-      "Scent leaf (nchanwu/efirin) prefers steadily damp soil. I'd keep it between 40% and 65% moisture.",
+    minMoisture: 60,
+    maxMoisture: 80,
+    frequency: "Water daily in dry season, every 2 days once established; avoid wetting the leaves.",
+    stage: "70-85 days to maturity",
+    tips: "Mulch around the base to reduce evaporation and blossom-end rot.",
+    issues: "Blossom-end rot usually means inconsistent watering, not a calcium problem — keep moisture steady.",
   },
   {
     name: "Pepper",
-    aliases: ["pepper", "peppers", "chili", "chilli", "chile"],
-    minMoisture: 30,
-    maxMoisture: 55,
-    description:
-      "Peppers prefer slightly drier soil between waterings. I'd set 30% to 55% moisture.",
-  },
-  {
-    name: "Mint",
-    aliases: ["mint", "peppermint", "spearmint"],
-    minMoisture: 45,
+    aliases: ["pepper", "peppers", "bell pepper", "tatashe", "rodo", "scotch bonnet", "ata rodo"],
+    minMoisture: 55,
     maxMoisture: 75,
-    description:
-      "Mint loves consistently damp soil and doesn't mind being on the wetter side. I'd target 45% to 75% moisture.",
+    frequency: "Water every 1-2 days; peppers dislike waterlogging more than dryness.",
+    stage: "90-150 days depending on variety",
+    tips: "Let the top 2cm of soil dry slightly between waterings to encourage fruit set.",
+    issues: "Flower drop is often from overwatering or heat stress, not underwatering.",
   },
   {
-    name: "Spinach",
-    aliases: ["spinach"],
-    minMoisture: 40,
+    name: "Onion",
+    aliases: ["onion", "onions", "alubosa"],
+    minMoisture: 50,
     maxMoisture: 65,
-    description:
-      "Spinach does best with even moisture and doesn't like drying out. I'd keep it at 40% to 65%.",
+    frequency: "Water every 2-3 days; reduce sharply 2-3 weeks before harvest to help bulbs cure.",
+    stage: "90-120 days",
+    tips: "Onions are shallow-rooted, so frequent light watering beats infrequent heavy watering.",
+    issues: "Soft, rotting bulbs usually mean the soil stayed too wet near harvest.",
   },
   {
-    name: "Lettuce",
-    aliases: ["lettuce"],
-    minMoisture: 40,
-    maxMoisture: 65,
-    description:
-      "Lettuce has shallow roots and needs frequent light moisture. I'd target 40% to 65%.",
+    name: "Okra",
+    aliases: ["okra", "okro"],
+    minMoisture: 50,
+    maxMoisture: 70,
+    frequency: "Water every 2 days; fairly drought-tolerant once established.",
+    stage: "55-65 days",
+    tips: "Okra tolerates Nigeria's dry spells well but yields more pods with consistent moisture.",
+    issues: "Tough, fibrous pods usually mean the plant was water-stressed during pod development.",
+  },
+  {
+    name: "Ugu (fluted pumpkin)",
+    aliases: ["ugu", "fluted pumpkin", "fluted pumpkin leaf", "pumpkin leaf"],
+    minMoisture: 65,
+    maxMoisture: 85,
+    frequency: "Water daily; ugu has broad leaves and loses moisture fast.",
+    stage: "70-90 days (leaves harvestable from 5-6 weeks)",
+    tips: "Give partial shade in peak dry season to reduce leaf scorch.",
+    issues: "Wilting by afternoon even with wet soil can mean root rot from prior overwatering.",
+  },
+  {
+    name: "Waterleaf",
+    aliases: ["waterleaf", "water leaf", "gbure"],
+    minMoisture: 70,
+    maxMoisture: 90,
+    frequency: "Water daily, sometimes twice in very dry heat — a high-water-demand leafy crop.",
+    stage: "40-50 days",
+    tips: "Grows best in constantly moist, slightly shaded beds.",
+    issues: "Yellowing leaves usually signal underwatering, not nutrient deficiency, for this crop.",
+  },
+  {
+    name: "Spinach / Amaranth",
+    aliases: ["spinach", "amaranth", "efo tete", "tete", "green"],
+    minMoisture: 60,
+    maxMoisture: 80,
+    frequency: "Water every 1-2 days; shallow roots dry out fast.",
+    stage: "25-40 days",
+    tips: "Harvest outer leaves regularly to encourage continuous growth.",
+    issues: "Bolting (flowering early) is often triggered by heat stress combined with dry soil.",
+  },
+  {
+    name: "Cabbage",
+    aliases: ["cabbage"],
+    minMoisture: 60,
+    maxMoisture: 75,
+    frequency: "Water every 2 days; needs consistent moisture especially while heads are forming.",
+    stage: "70-90 days",
+    tips: "Irregular watering causes heads to split.",
+    issues: "Split heads mean a dry spell was followed by heavy watering — keep it consistent.",
+  },
+  {
+    name: "Carrot",
+    aliases: ["carrot", "carrots"],
+    minMoisture: 55,
+    maxMoisture: 70,
+    frequency: "Water every 2-3 days; deep but infrequent watering encourages long roots.",
+    stage: "70-100 days",
+    tips: "Loose, sandy soil plus even moisture gives straighter roots.",
+    issues: "Forked or stunted roots often mean compacted soil or inconsistent watering, not overwatering.",
   },
   {
     name: "Cucumber",
     aliases: ["cucumber", "cucumbers"],
-    minMoisture: 45,
-    maxMoisture: 70,
-    description:
-      "Cucumbers need consistent water to avoid bitterness. I'd set 45% to 70% moisture.",
+    minMoisture: 65,
+    maxMoisture: 85,
+    frequency: "Water daily; cucumbers are over 90% water and sensitive to dry spells.",
+    stage: "50-70 days",
+    tips: "Mulch heavily; irregular watering causes bitter-tasting fruit.",
+    issues: "Bitter fruit is a classic sign of drought stress during fruiting.",
   },
   {
-    name: "Aloe vera",
-    aliases: ["aloe", "aloe vera"],
-    minMoisture: 10,
-    maxMoisture: 30,
-    description:
-      "Aloe vera is a succulent and prefers to dry out between waterings. I'd keep it low, 10% to 30% moisture.",
+    name: "Lettuce",
+    aliases: ["lettuce"],
+    minMoisture: 65,
+    maxMoisture: 80,
+    frequency: "Water daily in light amounts; shallow roots dry quickly.",
+    stage: "30-50 days",
+    tips: "Best grown in cooler, shaded parts of the dry season.",
+    issues: "Bitter, bolted lettuce usually means heat plus underwatering together.",
   },
   {
-    name: "Snake plant",
-    aliases: ["snake plant", "sansevieria", "mother-in-law's tongue"],
-    minMoisture: 10,
-    maxMoisture: 25,
-    description:
-      "Snake plants are very drought-tolerant. I'd keep moisture low, around 10% to 25%.",
+    name: "Garden egg (Eggplant)",
+    aliases: ["garden egg", "eggplant", "aubergine", "igba"],
+    minMoisture: 55,
+    maxMoisture: 75,
+    frequency: "Water every 1-2 days, more frequently once fruiting starts.",
+    stage: "80-100 days",
+    tips: "Consistent moisture during flowering improves fruit set.",
+    issues: "Dropped flowers often mean moisture stress or extreme heat, not pests.",
+  },
+  {
+    name: "Bitter leaf",
+    aliases: ["bitter leaf", "bitterleaf", "onugbu"],
+    minMoisture: 55,
+    maxMoisture: 75,
+    frequency: "Water every 2-3 days; fairly hardy and drought-tolerant once established.",
+    stage: "Leaves harvestable from 10-12 weeks",
+    tips: "Established plants tolerate irregular watering better than most leafy greens.",
+    issues: "Sparse leaf growth is more often a nutrient issue than a water issue for this crop.",
+  },
+  {
+    name: "Jute (Ewedu)",
+    aliases: ["jute", "ewedu", "jute mallow"],
+    minMoisture: 65,
+    maxMoisture: 85,
+    frequency: "Water daily; needs consistently moist soil for tender leaves.",
+    stage: "40-60 days",
+    tips: "Frequent light watering keeps leaves tender rather than fibrous.",
+    issues: "Tough, stringy leaves usually mean the crop went through dry spells.",
+  },
+  {
+    name: "Celosia (Soko)",
+    aliases: ["celosia", "soko", "soko yokoto"],
+    minMoisture: 60,
+    maxMoisture: 80,
+    frequency: "Water every 1-2 days.",
+    stage: "35-45 days",
+    tips: "Similar water needs to amaranth; harvest young for tender leaves.",
+    issues: "Early flowering often means heat stress combined with inconsistent watering.",
   },
 ];
 
-/**
- * Finds a plant whose name or alias appears in the given free-text input.
- * Case-insensitive substring match. Returns the plant object or null.
- */
-export function findPlant(text) {
-  if (!text) return null;
-  const normalized = text.toLowerCase();
-
-  for (const plant of PLANTS) {
-    for (const alias of plant.aliases) {
-      if (normalized.includes(alias.toLowerCase())) {
-        return plant;
-      }
-    }
-  }
-  return null;
+export function findPlant(query) {
+  const q = query.toLowerCase().trim();
+  return plants.find((p) => p.aliases.some((alias) => q.includes(alias)));
 }
 
-/**
- * Returns the list of display names for all known plants.
- */
 export function listPlantNames() {
-  return PLANTS.map((p) => p.name);
+  return plants.map((p) => p.name);
 }
 
-export default PLANTS;
+export default plants;
