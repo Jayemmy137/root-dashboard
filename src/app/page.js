@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { db } from "@/firebase";
 import { ref, onValue } from "firebase/database";
-import { Moon, Sun, Settings, Droplets, Activity, ChevronLeft, ChevronRight, Radio, Sprout } from "lucide-react";
+import { Moon, Sun, Settings, Droplets, Activity, ChevronLeft, ChevronRight, ChevronDown, Radio, Sprout } from "lucide-react";
 import { useRouter } from "next/navigation";
 import Logo from "@/components/Logo";
 
@@ -23,6 +23,11 @@ export default function Dashboard() {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split("T")[0]);
   const [logsForDate, setLogsForDate] = useState([]);
   const [logsLoading, setLogsLoading] = useState(true);
+  const [logExpanded, setLogExpanded] = useState(false);
+  const logScrollRef = useRef(null);
+
+  const COLLAPSED_HEIGHT = 120;
+  const EXPANDED_MAX_HEIGHT = 360;
 
   const changeDate = (offsetDays) => {
     const d = new Date(selectedDate);
@@ -84,6 +89,13 @@ export default function Dashboard() {
     });
     return () => unsubscribe();
   }, [selectedDate]);
+
+  useEffect(() => {
+    if (!logScrollRef.current) return;
+    if (!logExpanded) {
+      logScrollRef.current.scrollTop = logScrollRef.current.scrollHeight;
+    }
+  }, [logsForDate, logExpanded]);
 
   useEffect(() => {
     let raf;
@@ -308,21 +320,46 @@ export default function Dashboard() {
 
           <div className="relative bg-[var(--bg-card)] border border-[var(--border-color)] rounded-xl p-5 pl-6 mt-4 overflow-hidden">
             <span className="absolute left-0 top-0 bottom-0 w-[3px] bg-[var(--accent)]" />
-            <div className="flex justify-between items-center mb-3">
-              <p className="text-xs uppercase tracking-wide text-[var(--text-muted)] font-medium">Activity log</p>
-              <div className="flex items-center gap-2">
-                <button onClick={() => changeDate(-1)} className="text-[var(--text-muted)] hover:text-[var(--text-primary)]">
-                  <ChevronLeft size={16} />
-                </button>
-                <input
-                  type="date"
-                  value={selectedDate}
-                  onChange={(e) => setSelectedDate(e.target.value)}
-                  className="text-xs text-[var(--text-primary)] bg-[var(--bg-card)] border border-[var(--border-color)] rounded-md px-2 py-1 outline-none"
+
+            <div
+              onClick={() => setLogExpanded((prev) => !prev)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setLogExpanded((prev) => !prev);
+                }
+              }}
+              className="w-full flex justify-between items-center mb-3 cursor-pointer select-none"
+              aria-expanded={logExpanded}
+            >
+              <span className="text-xs uppercase tracking-wide text-[var(--text-muted)] font-medium">Activity log</span>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-[var(--text-muted)]">{logExpanded ? "Collapse" : "Expand"}</span>
+                <span
+                  role="presentation"
+                  onClick={(e) => e.stopPropagation()}
+                  className="flex items-center gap-2"
+                >
+                  <button onClick={() => changeDate(-1)} className="text-[var(--text-muted)] hover:text-[var(--text-primary)]">
+                    <ChevronLeft size={16} />
+                  </button>
+                  <input
+                    type="date"
+                    value={selectedDate}
+                    onChange={(e) => setSelectedDate(e.target.value)}
+                    className="text-xs text-[var(--text-primary)] bg-[var(--bg-card)] border border-[var(--border-color)] rounded-md px-2 py-1 outline-none"
+                  />
+                  <button onClick={() => changeDate(1)} className="text-[var(--text-muted)] hover:text-[var(--text-primary)]">
+                    <ChevronRight size={16} />
+                  </button>
+                </span>
+                <ChevronDown
+                  size={16}
+                  className="text-[var(--text-muted)] transition-transform duration-200"
+                  style={{ transform: logExpanded ? "rotate(180deg)" : "rotate(0deg)" }}
                 />
-                <button onClick={() => changeDate(1)} className="text-[var(--text-muted)] hover:text-[var(--text-primary)]">
-                  <ChevronRight size={16} />
-                </button>
               </div>
             </div>
 
@@ -331,7 +368,13 @@ export default function Dashboard() {
             ) : logsForDate.length === 0 ? (
               <p className="text-sm text-[var(--text-muted)] py-4 text-center">No activity recorded for this date.</p>
             ) : (
-              <div className="flex flex-col">
+              <div
+                ref={logScrollRef}
+                className="flex flex-col overflow-y-auto transition-[max-height] duration-300 ease-in-out"
+                style={{
+                  maxHeight: logExpanded ? EXPANDED_MAX_HEIGHT : COLLAPSED_HEIGHT,
+                }}
+              >
                 {logsForDate.map((log, i) => (
                   <div key={i} className="flex justify-between items-center py-2 text-sm border-b border-[var(--border-color)] last:border-none">
                     <span className="font-mono text-[var(--text-muted)] w-14">{log.time}</span>
