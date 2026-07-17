@@ -2,8 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { db } from "@/firebase";
-import { ref, onValue } from "firebase/database";
-import { Moon, Sun, Settings, Droplets, Activity, ChevronLeft, ChevronRight, ChevronDown, Radio, Sprout } from "lucide-react";
+import { ref, onValue, get } from "firebase/database";
+import { Moon, Sun, Settings, Droplets, Activity, ChevronLeft, ChevronRight, ChevronDown, Radio, Sprout, AlertTriangle, Download, Bell } from "lucide-react";
 import { useRouter } from "next/navigation";
 import Logo from "@/components/Logo";
 
@@ -15,10 +15,13 @@ export default function Dashboard() {
   const [displayMoisture, setDisplayMoisture] = useState(0);
   const [pumpStatus, setPumpStatus] = useState("off");
   const [lastEvent, setLastEvent] = useState("Waiting for device...");
-  const reservoirLevel = 68;
+  const [reservoirLow, setReservoirLow] = useState(false);
+  const prevReservoirLow = useRef(false);
 
-  const trend = [22, 30, 18, 26, 15, 24, 19];
-  const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  const [notifPermission, setNotifPermission] = useState("default");
+
+  const [trendPoints, setTrendPoints] = useState([]); // [{ label, value }]
+  const [trendLoading, setTrendLoading] = useState(true);
 
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split("T")[0]);
   const [logsForDate, setLogsForDate] = useState([]);
@@ -48,10 +51,25 @@ export default function Dashboard() {
     });
   };
 
+  // Browser notification permission state
+  useEffect(() => {
+    if (typeof window !== "undefined" && "Notification" in window) {
+      setNotifPermission(Notification.permission);
+    }
+  }, []);
+
+  const enableNotifications = async () => {
+    if (typeof window === "undefined" || !("Notification" in window)) return;
+    const result = await Notification.requestPermission();
+    setNotifPermission(result);
+  };
+
+  // Live device data
   useEffect(() => {
     const moistureRef = ref(db, "devices/frame01/moisture");
     const pumpRef = ref(db, "devices/frame01/pumpStatus");
     const eventRef = ref(db, "devices/frame01/lastEvent");
+    const reservoirRef = ref(db, "devices/frame01/reservoirLow");
 
     const unsubMoisture = onValue(moistureRef, (snapshot) => {
       if (snapshot.exists()) setMoisture(Number(snapshot.val()));
@@ -62,14 +80,29 @@ export default function Dashboard() {
     const unsubEvent = onValue(eventRef, (snapshot) => {
       if (snapshot.exists()) setLastEvent(snapshot.val());
     });
+    const unsubReservoir = onValue(reservoirRef, (snapshot) => {
+      if (!snapshot.exists()) return;
+      const low = Boolean(snapshot.val());
+      setReservoirLow(low);
+
+      // Fire a browser notification only on the transition into "low"
+      if (low && !prevReservoirLow.current && notifPermission === "granted") {
+        new Notification("Roots — Reservoir low", {
+          body: "Please refill the water reservoir. Watering is paused until it's topped up.",
+        });
+      }
+      prevReservoirLow.current = low;
+    });
 
     return () => {
       unsubMoisture();
       unsubPump();
       unsubEvent();
+      unsubReservoir();
     };
-  }, []);
+  }, [notifPermission]);
 
+  // Activity log for the selected date
   useEffect(() => {
     setLogsLoading(true);
     const logsRef = ref(db, `logs/${selectedDate}`);
@@ -89,6 +122,40 @@ export default function Dashboard() {
     });
     return () => unsubscribe();
   }, [selectedDate]);
+
+  // Real 7-day moisture trend, built from stored history — averages each day's readings
+  useEffect(() => {
+    const fetchTrend = async () => {
+      setTrendLoading(true);
+      const results = [];
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        const dateStr = d.toISOString().split("T")[0];
+        const label = d.toLocaleDateString("en-US", { weekday: "short" });
+
+        try {
+          const snap = await get(ref(db, `history/${dateStr}`));
+          if (snap.exists()) {
+            const vals = [];
+            snap.forEach((child) => {
+              const v = child.val()?.moisture;
+              if (typeof v === "number") vals.push(v);
+            });
+            const avg = vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+            results.push({ label, value: avg });
+          } else {
+            results.push({ label, value: null });
+          }
+        } catch (err) {
+          results.push({ label, value: null });
+        }
+      }
+      setTrendPoints(results);
+      setTrendLoading(false);
+    };
+    fetchTrend();
+  }, []);
 
   useEffect(() => {
     if (!logScrollRef.current) return;
@@ -111,36 +178,66 @@ export default function Dashboard() {
     return () => cancelAnimationFrame(raf);
   }, [moisture]);
 
+  const downloadLogCSV = () => {
+    if (logsForDate.length === 0) return;
+    const header = "Time,Event,Moisture (%)";
+    const rows = logsForDate.map(
+      (log) => `${log.time},"${log.event.replace(/"/g, '""')}",${log.moisture}`
+    );
+    const csvContent = [header, ...rows].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `roots-log-${selectedDate}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   const gaugeRadius = 42;
   const gaugeCircumference = 2 * Math.PI * gaugeRadius;
   const moistureOffset = gaugeCircumference * (1 - moisture / 100);
-  const reservoirOffset = gaugeCircumference * (1 - reservoirLevel / 100);
 
   const graphW = 300;
   const graphH = 100;
-  const maxVal = 50;
-  const points = trend.map((v, i) => {
-    const x = (i / (trend.length - 1)) * graphW;
-    const y = graphH - (v / maxVal) * graphH;
-    return { x, y };
+  const maxVal = 100;
+  const validCount = trendPoints.filter((p) => p.value !== null).length;
+  const points = trendPoints.map((p, i) => {
+    const x = (i / (trendPoints.length - 1 || 1)) * graphW;
+    const y = p.value === null ? null : graphH - (p.value / maxVal) * graphH;
+    return { x, y, label: p.label, value: p.value };
   });
-  const linePoints = points.map((p) => `${p.x},${p.y}`).join(" ");
-  const areaPoints = `0,${graphH} ${linePoints} ${graphW},${graphH}`;
+  const drawablePoints = points.filter((p) => p.y !== null);
+  const linePoints = drawablePoints.map((p) => `${p.x},${p.y}`).join(" ");
+  const areaPoints =
+    drawablePoints.length > 0
+      ? `${drawablePoints[0].x},${graphH} ${linePoints} ${drawablePoints[drawablePoints.length - 1].x},${graphH}`
+      : "";
 
   return (
     <div className={darkMode ? "dark" : ""}>
       <div className="min-h-screen bg-[var(--bg-page)] text-[var(--text-primary)] transition-colors duration-300">
-        <div className="max-w-5xl mx-auto px-6 py-6">
-          <div className="flex flex-wrap justify-between items-center gap-y-3 mb-6 pb-4 border-b border-[var(--border-color)]">
+        <div className="max-w-6xl mx-auto px-6 py-8 lg:px-10 lg:py-10">
+          <div className="flex flex-wrap justify-between items-center gap-y-3 mb-8 pb-5 border-b border-[var(--border-color)]">
             <div className="flex items-center gap-3">
-              <Logo size={28} />
+              <Logo size={30} />
               <span className="text-sm text-[var(--text-muted)] hidden sm:inline">Frame 01</span>
             </div>
-            <div className="flex items-center gap-3 sm:gap-5">
+            <div className="flex items-center gap-4 sm:gap-6">
               <span className="flex items-center gap-1.5 text-sm text-[var(--accent)]">
                 <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent)] animate-pulse" />
                 <span className="hidden sm:inline">CONNECTED</span>
               </span>
+              {notifPermission === "default" && (
+                <button
+                  onClick={enableNotifications}
+                  className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border border-[var(--border-color)] text-[var(--text-muted)] hover:border-[var(--accent)] hover:text-[var(--accent)] transition-colors"
+                >
+                  <Bell size={13} /> Enable alerts
+                </button>
+              )}
               <button onClick={() => router.push("/assistant")} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors">
                 <Sprout size={17} />
               </button>
@@ -153,77 +250,53 @@ export default function Dashboard() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <div className="relative bg-[var(--bg-card)] border border-[var(--border-color)] rounded-xl p-5 pl-6 overflow-hidden">
+          {reservoirLow && (
+            <div className="flex items-center gap-3 bg-[#E2A93E]/10 border border-[#E2A93E]/40 text-[#E2A93E] rounded-xl px-5 py-3.5 mb-6">
+              <AlertTriangle size={18} className="shrink-0" />
+              <p className="text-sm">
+                <span className="font-medium">Reservoir low</span> — please refill. Watering is paused until water is added.
+              </p>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="relative bg-[var(--bg-card)] border border-[var(--border-color)] rounded-xl p-7 pl-8 overflow-hidden flex flex-col items-center justify-center">
               <span className="absolute left-0 top-0 bottom-0 w-[3px] bg-[var(--accent)]" />
-              <p className="flex items-center gap-2 text-xs uppercase tracking-wide text-[var(--text-muted)] mb-5 font-medium">
+              <p className="w-full flex items-center gap-2 text-xs uppercase tracking-wide text-[var(--text-muted)] mb-6 font-medium">
                 <Droplets size={14} /> Water system
               </p>
 
-              <div className="flex justify-around">
-                <div className="flex flex-col items-center">
-                  <svg width="96" height="96" viewBox="0 0 96 96">
-                    <circle cx="48" cy="48" r={gaugeRadius} fill="none" stroke="var(--border-color)" strokeWidth="7" />
-                    <circle
-                      cx="48"
-                      cy="48"
-                      r={gaugeRadius}
-                      fill="none"
-                      stroke="var(--accent)"
-                      strokeWidth="7"
-                      strokeLinecap="round"
-                      strokeDasharray={gaugeCircumference}
-                      strokeDashoffset={moistureOffset}
-                      transform="rotate(-90 48 48)"
-                      style={{ transition: "stroke-dashoffset 0.6s ease" }}
-                    />
-                    <text x="48" y="45" textAnchor="middle" fontSize="20" fontWeight="600" fontFamily="monospace" fill="var(--text-primary)">
-                      {Math.round(displayMoisture)}
-                    </text>
-                    <text x="48" y="59" textAnchor="middle" fontSize="10" fill="var(--text-muted)">
-                      %
-                    </text>
-                  </svg>
-                  <p className="text-xs uppercase tracking-wide text-[var(--text-muted)] mt-1 font-medium">Soil moisture</p>
-                  <span className="text-xs px-2 py-0.5 rounded-full bg-[var(--accent)]/15 text-[var(--accent)] mt-1 font-medium">
-                    {moisture < 30 ? "Low" : "Normal"}
-                  </span>
-                </div>
-
-                <div className="flex flex-col items-center">
-                  <svg width="96" height="96" viewBox="0 0 96 96">
-                    <circle cx="48" cy="48" r={gaugeRadius} fill="none" stroke="var(--border-color)" strokeWidth="7" />
-                    <circle
-                      cx="48"
-                      cy="48"
-                      r={gaugeRadius}
-                      fill="none"
-                      stroke="#3E6E8E"
-                      strokeWidth="7"
-                      strokeLinecap="round"
-                      strokeDasharray={gaugeCircumference}
-                      strokeDashoffset={reservoirOffset}
-                      transform="rotate(-90 48 48)"
-                      style={{ transition: "stroke-dashoffset 0.6s ease" }}
-                    />
-                    <text x="48" y="45" textAnchor="middle" fontSize="20" fontWeight="600" fontFamily="monospace" fill="var(--text-primary)">
-                      {reservoirLevel}
-                    </text>
-                    <text x="48" y="59" textAnchor="middle" fontSize="10" fill="var(--text-muted)">
-                      %
-                    </text>
-                  </svg>
-                  <p className="text-xs uppercase tracking-wide text-[var(--text-muted)] mt-1 font-medium">Reservoir</p>
-                  <span className="text-xs px-2 py-0.5 rounded-full bg-[#3E6E8E]/15 text-[#3E6E8E] mt-1 font-medium">
-                    {reservoirLevel < 20 ? "Low" : "Normal"}
-                  </span>
-                </div>
-              </div>
+              <svg width="130" height="130" viewBox="0 0 96 96">
+                <circle cx="48" cy="48" r={gaugeRadius} fill="none" stroke="var(--border-color)" strokeWidth="7" />
+                <circle
+                  cx="48"
+                  cy="48"
+                  r={gaugeRadius}
+                  fill="none"
+                  stroke="var(--accent)"
+                  strokeWidth="7"
+                  strokeLinecap="round"
+                  strokeDasharray={gaugeCircumference}
+                  strokeDashoffset={moistureOffset}
+                  transform="rotate(-90 48 48)"
+                  style={{ transition: "stroke-dashoffset 0.6s ease" }}
+                />
+                <text x="48" y="45" textAnchor="middle" fontSize="22" fontWeight="600" fontFamily="monospace" fill="var(--text-primary)">
+                  {Math.round(displayMoisture)}
+                </text>
+                <text x="48" y="60" textAnchor="middle" fontSize="11" fill="var(--text-muted)">
+                  %
+                </text>
+              </svg>
+              <p className="text-xs uppercase tracking-wide text-[var(--text-muted)] mt-3 font-medium">Soil moisture</p>
+              <span className="text-xs px-2 py-0.5 rounded-full bg-[var(--accent)]/15 text-[var(--accent)] mt-1.5 font-medium">
+                {moisture < 30 ? "Low" : "Normal"}
+              </span>
             </div>
 
-            <div className="relative bg-[var(--bg-card)] border border-[var(--border-color)] rounded-xl p-5 pl-6 overflow-hidden">
+            <div className="relative bg-[var(--bg-card)] border border-[var(--border-color)] rounded-xl p-7 pl-8 overflow-hidden">
               <span className="absolute left-0 top-0 bottom-0 w-[3px] bg-[#3E6E8E]" />
-              <div className="flex justify-between items-center mb-4">
+              <div className="flex justify-between items-center mb-5">
                 <p className="flex items-center gap-2 text-xs uppercase tracking-wide text-[var(--text-muted)] font-medium">
                   <Activity size={14} /> OLED mirror
                 </p>
@@ -231,20 +304,20 @@ export default function Dashboard() {
                   <span className="w-1.5 h-1.5 rounded-full bg-[#E2554A] animate-pulse" /> LIVE
                 </span>
               </div>
-              <div className="bg-[#050705] border border-[#1E2B22] rounded-lg p-4 font-mono text-sm text-[var(--accent)] min-h-[120px] flex flex-col justify-center">
+              <div className="bg-[#050705] border border-[#1E2B22] rounded-lg p-5 font-mono text-sm text-[var(--accent)] min-h-[130px] flex flex-col justify-center">
                 <p>MOIST: {moisture}%</p>
                 <p>PUMP: {pumpStatus.toUpperCase()}</p>
                 <p className="text-[var(--text-muted)] text-xs mt-2 break-words">{lastEvent}</p>
               </div>
             </div>
 
-            <div className="relative bg-[var(--bg-card)] border border-[var(--border-color)] rounded-xl p-5 pl-6 overflow-hidden">
+            <div className="relative bg-[var(--bg-card)] border border-[var(--border-color)] rounded-xl p-7 pl-8 overflow-hidden">
               <span className="absolute left-0 top-0 bottom-0 w-[3px] bg-[#8B6FE8]" />
-              <p className="flex items-center gap-2 text-xs uppercase tracking-wide text-[var(--text-muted)] mb-4 font-medium">
+              <p className="flex items-center gap-2 text-xs uppercase tracking-wide text-[var(--text-muted)] mb-5 font-medium">
                 <Radio size={14} /> Device status
               </p>
 
-              <div className="flex items-center justify-between py-3 border-b border-[var(--border-color)]">
+              <div className="flex items-center justify-between py-3.5 border-b border-[var(--border-color)]">
                 <p className="text-sm">Pump</p>
                 <span
                   className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded-full font-medium ${
@@ -262,63 +335,84 @@ export default function Dashboard() {
                 </span>
               </div>
 
-              <div className="flex items-center justify-between py-3 border-b border-[var(--border-color)]">
+              <div className="flex items-center justify-between py-3.5 border-b border-[var(--border-color)]">
                 <p className="text-sm">Watering mode</p>
                 <span className="text-xs px-2 py-1 rounded-full bg-[var(--accent)]/15 text-[var(--accent)] font-medium">
                   Automatic
                 </span>
               </div>
 
-              <div className="flex items-center justify-between py-3">
-                <p className="text-sm">Device</p>
-                <span className="text-xs px-2 py-1 rounded-full bg-[var(--accent)]/15 text-[var(--accent)] font-medium">
-                  Online
+              <div className="flex items-center justify-between py-3.5">
+                <p className="text-sm">Reservoir</p>
+                <span
+                  className={`text-xs px-2 py-1 rounded-full font-medium ${
+                    reservoirLow
+                      ? "bg-[#E2A93E]/15 text-[#E2A93E]"
+                      : "bg-[var(--accent)]/15 text-[var(--accent)]"
+                  }`}
+                >
+                  {reservoirLow ? "Low — refill" : "OK"}
                 </span>
               </div>
 
-              <p className="text-xs text-[var(--text-muted)] mt-3">
+              <p className="text-xs text-[var(--text-muted)] mt-4">
                 Watering settings are managed on the Settings page — this panel reflects live status only.
               </p>
             </div>
           </div>
 
-          <div className="relative bg-[var(--bg-card)] border border-[var(--border-color)] rounded-xl p-5 pl-6 mt-4 overflow-hidden">
+          <div className="relative bg-[var(--bg-card)] border border-[var(--border-color)] rounded-xl p-7 pl-8 mt-6 overflow-hidden">
             <span className="absolute left-0 top-0 bottom-0 w-[3px] bg-[#3E6E8E]" />
-            <p className="text-xs uppercase tracking-wide text-[var(--text-muted)] mb-3 font-medium">Moisture, 7 days</p>
-            <svg viewBox={`0 0 ${graphW} ${graphH + 20}`} className="w-full h-28">
-              <defs>
-                <linearGradient id="areaFill" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#3E6E8E" stopOpacity="0.25" />
-                  <stop offset="100%" stopColor="#3E6E8E" stopOpacity="0" />
-                </linearGradient>
-              </defs>
-              {[0.25, 0.5, 0.75].map((f, i) => (
-                <line key={i} x1="0" y1={graphH * f} x2={graphW} y2={graphH * f} stroke="var(--border-color)" strokeWidth="1" />
-              ))}
-              <polygon points={areaPoints} fill="url(#areaFill)" />
-              <polyline
-                points={linePoints}
-                fill="none"
-                stroke="#3E6E8E"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-              {points.map((p, i) => (
-                <circle key={i} cx={p.x} cy={p.y} r="3" fill="#3E6E8E" />
-              ))}
-              {points.map((p, i) => (
-                <text key={i} x={p.x} y={graphH + 16} fontSize="10" fill="var(--text-muted)" textAnchor="middle">
-                  {days[i]}
-                </text>
-              ))}
-            </svg>
-            <p className="text-xs text-[var(--text-muted)] mt-2">
-              This chart is still sample data — connecting it to real history is a separate step.
-            </p>
+            <p className="text-xs uppercase tracking-wide text-[var(--text-muted)] mb-4 font-medium">Moisture, 7 days</p>
+
+            {trendLoading ? (
+              <p className="text-sm text-[var(--text-muted)] py-6 text-center">Loading history...</p>
+            ) : validCount === 0 ? (
+              <p className="text-sm text-[var(--text-muted)] py-6 text-center">
+                No history yet — this fills in as the device runs and collects real readings.
+              </p>
+            ) : (
+              <>
+                <svg viewBox={`0 0 ${graphW} ${graphH + 20}`} className="w-full h-32">
+                  <defs>
+                    <linearGradient id="areaFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#3E6E8E" stopOpacity="0.25" />
+                      <stop offset="100%" stopColor="#3E6E8E" stopOpacity="0" />
+                    </linearGradient>
+                  </defs>
+                  {[0.25, 0.5, 0.75].map((f, i) => (
+                    <line key={i} x1="0" y1={graphH * f} x2={graphW} y2={graphH * f} stroke="var(--border-color)" strokeWidth="1" />
+                  ))}
+                  {areaPoints && <polygon points={areaPoints} fill="url(#areaFill)" />}
+                  {linePoints && (
+                    <polyline
+                      points={linePoints}
+                      fill="none"
+                      stroke="#3E6E8E"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  )}
+                  {points.map((p, i) =>
+                    p.y !== null ? <circle key={i} cx={p.x} cy={p.y} r="3" fill="#3E6E8E" /> : null
+                  )}
+                  {points.map((p, i) => (
+                    <text key={i} x={p.x} y={graphH + 16} fontSize="10" fill="var(--text-muted)" textAnchor="middle">
+                      {p.label}
+                    </text>
+                  ))}
+                </svg>
+                {validCount < 7 && (
+                  <p className="text-xs text-[var(--text-muted)] mt-2">
+                    Showing {validCount} of 7 days — the rest will fill in as more history is collected.
+                  </p>
+                )}
+              </>
+            )}
           </div>
 
-          <div className="relative bg-[var(--bg-card)] border border-[var(--border-color)] rounded-xl p-5 pl-6 mt-4 overflow-hidden">
+          <div className="relative bg-[var(--bg-card)] border border-[var(--border-color)] rounded-xl p-7 pl-8 mt-6 overflow-hidden">
             <span className="absolute left-0 top-0 bottom-0 w-[3px] bg-[var(--accent)]" />
 
             <div
@@ -331,7 +425,7 @@ export default function Dashboard() {
                   setLogExpanded((prev) => !prev);
                 }
               }}
-              className="w-full flex justify-between items-center mb-3 cursor-pointer select-none"
+              className="w-full flex justify-between items-center mb-4 cursor-pointer select-none"
               aria-expanded={logExpanded}
             >
               <span className="text-xs uppercase tracking-wide text-[var(--text-muted)] font-medium">Activity log</span>
@@ -342,6 +436,15 @@ export default function Dashboard() {
                   onClick={(e) => e.stopPropagation()}
                   className="flex items-center gap-2"
                 >
+                  <button
+                    onClick={downloadLogCSV}
+                    disabled={logsForDate.length === 0}
+                    className="text-[var(--text-muted)] hover:text-[var(--text-primary)] disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                    aria-label="Download log as CSV"
+                    title="Download CSV"
+                  >
+                    <Download size={16} />
+                  </button>
                   <button onClick={() => changeDate(-1)} className="text-[var(--text-muted)] hover:text-[var(--text-primary)]">
                     <ChevronLeft size={16} />
                   </button>
@@ -376,7 +479,7 @@ export default function Dashboard() {
                 }}
               >
                 {logsForDate.map((log, i) => (
-                  <div key={i} className="flex justify-between items-center py-2 text-sm border-b border-[var(--border-color)] last:border-none">
+                  <div key={i} className="flex justify-between items-center py-2.5 text-sm border-b border-[var(--border-color)] last:border-none">
                     <span className="font-mono text-[var(--text-muted)] w-14">{log.time}</span>
                     <span className="flex-1 px-3">{log.event}</span>
                     <span className="text-[var(--text-muted)]">{log.moisture}% moisture</span>
