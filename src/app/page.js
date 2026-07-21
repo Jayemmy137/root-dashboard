@@ -18,9 +18,12 @@ export default function Dashboard() {
   const [reservoirLow, setReservoirLow] = useState(false);
   const prevReservoirLow = useRef(false);
 
+  const [lastSeen, setLastSeen] = useState(null);
+  const [isOnline, setIsOnline] = useState(false);
+
   const [notifPermission, setNotifPermission] = useState("default");
 
-  const [trendPoints, setTrendPoints] = useState([]); // [{ label, value }]
+  const [trendPoints, setTrendPoints] = useState([]);
   const [trendLoading, setTrendLoading] = useState(true);
 
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split("T")[0]);
@@ -51,7 +54,6 @@ export default function Dashboard() {
     });
   };
 
-  // Browser notification permission state
   useEffect(() => {
     if (typeof window !== "undefined" && "Notification" in window) {
       setNotifPermission(Notification.permission);
@@ -70,6 +72,7 @@ export default function Dashboard() {
     const pumpRef = ref(db, "devices/frame01/pumpStatus");
     const eventRef = ref(db, "devices/frame01/lastEvent");
     const reservoirRef = ref(db, "devices/frame01/reservoirLow");
+    const lastSeenRef = ref(db, "devices/frame01/lastSeen");
 
     const unsubMoisture = onValue(moistureRef, (snapshot) => {
       if (snapshot.exists()) setMoisture(Number(snapshot.val()));
@@ -85,7 +88,6 @@ export default function Dashboard() {
       const low = Boolean(snapshot.val());
       setReservoirLow(low);
 
-      // Fire a browser notification only on the transition into "low"
       if (low && !prevReservoirLow.current && notifPermission === "granted") {
         new Notification("Roots — Reservoir low", {
           body: "Please refill the water reservoir. Watering is paused until it's topped up.",
@@ -93,14 +95,34 @@ export default function Dashboard() {
       }
       prevReservoirLow.current = low;
     });
+    const unsubLastSeen = onValue(lastSeenRef, (snapshot) => {
+      if (snapshot.exists()) setLastSeen(Number(snapshot.val()));
+    });
 
     return () => {
       unsubMoisture();
       unsubPump();
       unsubEvent();
       unsubReservoir();
+      unsubLastSeen();
     };
   }, [notifPermission]);
+
+  // Re-check connection freshness every few seconds, since Firebase only
+  // fires when the value changes — a stalled device won't push a new value
+  useEffect(() => {
+    const checkOnline = () => {
+      if (!lastSeen) {
+        setIsOnline(false);
+        return;
+      }
+      const nowSec = Math.floor(Date.now() / 1000);
+      setIsOnline(nowSec - lastSeen < 90);
+    };
+    checkOnline();
+    const interval = setInterval(checkOnline, 5000);
+    return () => clearInterval(interval);
+  }, [lastSeen]);
 
   // Activity log for the selected date
   useEffect(() => {
@@ -123,7 +145,7 @@ export default function Dashboard() {
     return () => unsubscribe();
   }, [selectedDate]);
 
-  // Real 7-day moisture trend, built from stored history — averages each day's readings
+  // Real 7-day moisture trend, built from stored history
   useEffect(() => {
     const fetchTrend = async () => {
       setTrendLoading(true);
@@ -226,9 +248,9 @@ export default function Dashboard() {
               <span className="text-sm text-[var(--text-muted)] hidden sm:inline">Frame 01</span>
             </div>
             <div className="flex items-center gap-4 sm:gap-6">
-              <span className="flex items-center gap-1.5 text-sm text-[var(--accent)]">
-                <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent)] animate-pulse" />
-                <span className="hidden sm:inline">CONNECTED</span>
+              <span className={`flex items-center gap-1.5 text-sm ${isOnline ? "text-[var(--accent)]" : "text-[#E2554A]"}`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? "bg-[var(--accent)] animate-pulse" : "bg-[#E2554A]"}`} />
+                <span className="hidden sm:inline">{isOnline ? "CONNECTED" : "OFFLINE"}</span>
               </span>
               {notifPermission === "default" && (
                 <button
