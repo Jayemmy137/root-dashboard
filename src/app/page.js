@@ -222,12 +222,16 @@ export default function Dashboard() {
   const gaugeCircumference = 2 * Math.PI * gaugeRadius;
   const moistureOffset = gaugeCircumference * (1 - moisture / 100);
 
+  // Chart layout — left gutter reserved for the y-axis title + tick labels
   const graphW = 300;
   const graphH = 100;
   const maxVal = 100;
+  const axisGutter = 34;
+  const chartTotalW = graphW + axisGutter;
+
   const validCount = trendPoints.filter((p) => p.value !== null).length;
   const points = trendPoints.map((p, i) => {
-    const x = (i / (trendPoints.length - 1 || 1)) * graphW;
+    const x = axisGutter + (i / (trendPoints.length - 1 || 1)) * graphW;
     const y = p.value === null ? null : graphH - (p.value / maxVal) * graphH;
     return { x, y, label: p.label, value: p.value };
   });
@@ -237,6 +241,8 @@ export default function Dashboard() {
     drawablePoints.length > 0
       ? `${drawablePoints[0].x},${graphH} ${linePoints} ${drawablePoints[drawablePoints.length - 1].x},${graphH}`
       : "";
+
+  const yTicks = [0, 25, 50, 75, 100];
 
   return (
     <div className={darkMode ? "dark" : ""}>
@@ -260,9 +266,6 @@ export default function Dashboard() {
                   <Bell size={13} /> Enable alerts
                 </button>
               )}
-              <button onClick={() => router.push("/assistant")} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors">
-                <Sprout size={17} />
-              </button>
               <button onClick={toggleTheme} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors" aria-label="Toggle dark mode">
                 {darkMode ? <Sun size={17} /> : <Moon size={17} />}
               </button>
@@ -395,16 +398,52 @@ export default function Dashboard() {
               </p>
             ) : (
               <>
-                <svg viewBox={`0 0 ${graphW} ${graphH + 20}`} className="w-full h-32">
+                <svg viewBox={`0 0 ${chartTotalW} ${graphH + 20}`} className="w-full h-32">
                   <defs>
                     <linearGradient id="areaFill" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor="#3E6E8E" stopOpacity="0.25" />
                       <stop offset="100%" stopColor="#3E6E8E" stopOpacity="0" />
                     </linearGradient>
                   </defs>
-                  {[0.25, 0.5, 0.75].map((f, i) => (
-                    <line key={i} x1="0" y1={graphH * f} x2={graphW} y2={graphH * f} stroke="var(--border-color)" strokeWidth="1" />
-                  ))}
+
+                  {/* Y-axis title, rotated to run vertically along the left edge */}
+                  <text
+                    x={12}
+                    y={graphH / 2}
+                    fontSize="10"
+                    fill="var(--text-muted)"
+                    textAnchor="middle"
+                    transform={`rotate(-90 12 ${graphH / 2})`}
+                  >
+                    Moisture (%)
+                  </text>
+
+                  {/* Gridlines + y-axis tick labels */}
+                  {yTicks.map((tick, i) => {
+                    const y = graphH - (tick / maxVal) * graphH;
+                    return (
+                      <g key={i}>
+                        <line
+                          x1={axisGutter}
+                          y1={y}
+                          x2={chartTotalW}
+                          y2={y}
+                          stroke="var(--border-color)"
+                          strokeWidth="1"
+                        />
+                        <text
+                          x={axisGutter - 6}
+                          y={y + 3}
+                          fontSize="9"
+                          fill="var(--text-muted)"
+                          textAnchor="end"
+                        >
+                          {tick}
+                        </text>
+                      </g>
+                    );
+                  })}
+
                   {areaPoints && <polygon points={areaPoints} fill="url(#areaFill)" />}
                   {linePoints && (
                     <polyline
@@ -511,6 +550,19 @@ export default function Dashboard() {
             )}
           </div>
         </div>
+
+        <button
+          onClick={() => router.push("/assistant")}
+          aria-label="Open plant assistant"
+          title="Plant assistant"
+          className="fixed z-[9999] flex items-center justify-center w-14 h-14 rounded-full bg-[var(--accent)] text-[#04150B] shadow-lg hover:opacity-90 hover:scale-105 active:scale-95 transition-all duration-150"
+          style={{
+            bottom: "calc(env(safe-area-inset-bottom, 0px) + 1.5rem)",
+            right: "calc(env(safe-area-inset-right, 0px) + 1.5rem)",
+          }}
+        >
+          <Sprout size={24} />
+        </button>
 
         <style jsx global>{`
           :root {
